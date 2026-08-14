@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TechRadar Transcriber Prototype</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; line-height: 1.6; color: #333; }
+    
+    /* Sticky Controls CSS */
+    .controls { 
+      padding: 20px; 
+      background: #f4f4f4; 
+      border-radius: 8px; 
+      margin-bottom: 20px; 
+      position: sticky; 
+      top: 0; 
+      z-index: 100;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    
+    .speaker-controls { padding: 20px; background: #f4f4f4; border-radius: 8px; margin-bottom: 20px; }
+    
+    button { padding: 8px 16px; margin: 0 0 0 10px; cursor: pointer; background: #1976d2; color: white; border: none; border-radius: 4px; font-weight: bold; transition: background 0.2s; }
+    button:hover:not(:disabled) { background: #1565c0; }
+    button:disabled { background: #cccccc !important; cursor: not-allowed; color: #666; }
+    
+    .btn-primary { margin: 5px 5px 5px 0; }
+    .btn-clean { background: #f57c00; }
+    .btn-clean:hover:not(:disabled) { background: #e65100; }
+    .btn-clean-alt { background: #fbc02d; color: #333; }
+    .btn-clean-alt:hover:not(:disabled) { background: #f9a825; }
+    .btn-copy { background: #2e7d32; }
+    .btn-copy:hover:not(:disabled) { background: #1b5e20; }
+
+    .loop-btn { background: #555; margin: 0 5px 0 0; }
+    .loop-btn:hover:not(:disabled) { background: #333; }
+    .loop-cancel { background: #d32f2f; margin: 0 5px 0 0;}
+    .loop-cancel:hover:not(:disabled) { background: #9a0007; }
+
+    .transcript-box { border: 1px solid #ddd; padding: 20px; min-height: 200px; border-radius: 8px; background: white; margin-top: 15px; }
+    
+    .speaker-row { display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd; }
+    .speaker-row input[type="text"] { padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+    .unknown-speaker-row { background-color: #ffebee; padding: 10px; border-radius: 4px; }
+    
+    .locked-section { opacity: 0.5; pointer-events: none; filter: grayscale(50%); }
+    .unlock-message { font-style: italic; color: #666; font-size: 0.9em; float: right; margin-top: 5px; }
+
+    .speaker-label { color: #d32f2f; margin-right: 8px; font-family: monospace; }
+    .word { cursor: text; transition: background 0.2s; border-radius: 2px; }
+    .word:hover { background-color: #e0e0e0; } 
+    .low-confidence { background-color: #fff3cd; border-bottom: 2px dotted #ffc107; }
+
+    .switch-container { display: flex; align-items: center; gap: 10px; margin: 15px 0; font-weight: bold; }
+    .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 24px; }
+    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: #4CAF50; }
+    input:checked + .slider:before { transform: translateX(26px); }
+    
+    .transcript-header { display: flex; justify-content: space-between; align-items: center; margin-top: 30px; }
+    .action-buttons { display: flex; align-items: center; }
+  </style>
+</head>
+<body>
+
+  <h2>TechRadar Transcriber (Local Test)</h2>
+
+  <div class="controls">
+    <input type="password" id="apiKey" placeholder="Paste Deepgram API Key here" style="width: 250px; padding: 8px;"><br><br>
+    
+    <input type="file" id="audioInput" accept="audio/*"><br><br>
+    <audio id="audioPlayer" controls style="width: 100%;"></audio>
+    
+    <div style="margin-top: 10px; display: flex; align-items: center; gap: 5px;">
+      <span style="font-weight: bold; margin-right: 10px;">Loop Audio:</span>
+      <button id="loop3Btn" class="loop-btn btn-primary">3s</button>
+      <button id="loop5Btn" class="loop-btn btn-primary">5s</button>
+      <button id="loop10Btn" class="loop-btn btn-primary">10s</button>
+      <button id="loopCancelBtn" class="loop-cancel btn-primary" disabled>Cancel Loop</button>
+      <span id="loopStatus" style="color: #d32f2f; font-weight: bold; display: none; margin-left: 10px;">↻ Looping Active (Centered)</span>
+    </div>
+    
+    <div class="switch-container">
+      <span>Dialogue Enhancer:</span>
+      <label class="switch">
+        <input type="checkbox" id="enhancerToggle">
+        <span class="slider"></span>
+      </label>
+      <span id="enhancerStatus" style="color: #666; font-size: 0.9em;">(Off)</span>
+    </div>
+
+    <button id="transcribeBtn" class="btn-primary">Transcribe with Deepgram</button>
+  </div>
+
+  <div id="statusText" style="color: blue; font-weight: bold; margin-bottom: 10px;"></div>
+
+  <div id="speakerControls" class="speaker-controls">
+    <div style="overflow: hidden; margin-bottom: 15px;">
+      <h3 style="margin: 0; float: left;">Speaker Settings</h3>
+      <span id="lockedMessage" class="unlock-message">🔒 Start transcription to unlock speaker tools</span>
+    </div>
+    
+    <div id="speakerList" class="locked-section">
+      <div class="speaker-row">
+        <strong>Spk ?:</strong>
+        <input type="text" placeholder="Name" disabled>
+        <label><input type="checkbox" disabled> Show Name</label>
+        <label><input type="checkbox" disabled> <b>Bold</b></label>
+        <label><input type="checkbox" disabled> <i>Italic</i></label>
+        <label style="color: red;"><input type="checkbox" disabled> Hide Output</label>
+      </div>
+    </div>
+  </div>
+  
+  <div class="transcript-header">
+    <h3 style="margin: 0;">Transcript Output:</h3>
+    <div class="action-buttons">
+      <button id="cleanUpBtn" class="btn-clean" disabled>✨ Clean Up (uh/um + stutters)</button>
+      <button id="cleanYouKnowBtn" class="btn-clean-alt" disabled>✨ Remove "you know"</button>
+      <button id="copyBtn" class="btn-copy" disabled>Copy Transcript (Rich Text)</button>
+    </div>
+  </div>
+  
+  <div id="transcriptOutput" class="transcript-box">Audio text will appear here...</div>
+
+  <script>
+    let globalWordsArray = [];
+    let speakerConfig = {};
+    let loopStart = null;
+    let loopEnd = null;
+    let isLooping = false;
+
+    // --- Audio Player & Enhancer Setup ---
+    let audioContext, filter, source;
+    const audioPlayer = document.getElementById('audioPlayer');
+    
+    document.getElementById('audioInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        audioPlayer.src = URL.createObjectURL(file);
+        cancelLoop();
+      }
+    });
+
+    document.getElementById('enhancerToggle').addEventListener('change', (e) => {
+      const isEnabled = e.target.checked;
+      
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        source = audioContext.createMediaElementSource(audioPlayer);
+        filter = audioContext.createBiquadFilter();
+        filter.type = "highpass";
+        source.connect(filter);
+        filter.connect(audioContext.destination);
+      }
+      filter.frequency.value = isEnabled ? 120 : 0;
+      document.getElementById('enhancerStatus').innerText = isEnabled ? "(On - Low rumble cut)" : "(Off)";
+    });
+
+    // --- Audio Looping Logic ---
+    function startLoop(duration) {
+      let centerTime = audioPlayer.currentTime;
+      loopStart = Math.max(0, centerTime - (duration / 2));
+      loopEnd = loopStart + duration;
+      isLooping = true;
+      audioPlayer.currentTime = loopStart;
+      document.getElementById('loopCancelBtn').disabled = false;
+      document.getElementById('loopStatus').style.display = 'inline';
+      audioPlayer.play();
+    }
+
+    function cancelLoop() {
+      isLooping = false;
+      document.getElementById('loopCancelBtn').disabled = true;
+      document.getElementById('loopStatus').style.display = 'none';
+    }
+
+    document.getElementById('loop3Btn').addEventListener('click', () => startLoop(3));
+    document.getElementById('loop5Btn').addEventListener('click', () => startLoop(5));
+    document.getElementById('loop10Btn').addEventListener('click', () => startLoop(10));
+    document.getElementById('loopCancelBtn').addEventListener('click', cancelLoop);
+
+    audioPlayer.addEventListener('timeupdate', () => {
+      if (isLooping && audioPlayer.currentTime >= loopEnd) {
+        audioPlayer.currentTime = loopStart;
+      }
+    });
+
+    // --- Deepgram API Call ---
+    document.getElementById('transcribeBtn').addEventListener('click', async () => {
+      const file = document.getElementById('audioInput').files[0];
+      const apiKey = document.getElementById('apiKey').value;
+      const status = document.getElementById('statusText');
+
+      if (!file || !apiKey) {
+        alert("Please upload an audio file and enter your API key.");
+        return;
+      }
+
+      status.innerText = "Uploading and processing... (This should take <10 seconds)";
+      
+      try {
+        const url = 'https://api.deepgram.com/v1/listen?model=nova-3&diarize=true&punctuate=true&smart_format=true&mip_opt_out=true';
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Token ${apiKey}`,
+            'Content-Type': file.type
+          },
+          body: file
+        });
+
+        const data = await response.json();
+        status.innerText = "Transcription complete!";
+        
+        globalWordsArray = data.results?.channels[0]?.alternatives[0]?.words || [];
+        if (globalWordsArray.length === 0) return status.innerText = "Error: No speech found.";
+        
+        // Speaker Logic Fix: Shift names up to Speaker 1, assign Unknown to Speaker 0
+        globalWordsArray.forEach((w, index) => {
+          if (w.speaker === undefined) {
+             const prevWord = index > 0 ? globalWordsArray[index - 1] : null;
+             if (prevWord && (w.start - prevWord.end < 1.5)) {
+                 w.speaker = prevWord.speaker; 
+             } else {
+                 w.speaker = 0; // True Unknown
+             }
+          } else {
+             w.speaker = w.speaker + 1; // Deepgram 0 becomes Speaker 1
+          }
+        });
+
+        document.getElementById('speakerList').classList.remove('locked-section');
+        document.getElementById('lockedMessage').style.display = 'none';
+        document.getElementById('copyBtn').disabled = false;
+        
+        const cleanUpBtn = document.getElementById('cleanUpBtn');
+        cleanUpBtn.disabled = false;
+        cleanUpBtn.innerText = "✨ Clean Up (uh/um + stutters)";
+
+        const cleanYouKnowBtn = document.getElementById('cleanYouKnowBtn');
+        cleanYouKnowBtn.disabled = false;
+        cleanYouKnowBtn.innerText = "✨ Remove \"you know\"";
+
+        initializeSpeakers();
+        renderTranscript();
+
+      } catch (error) {
+        status.innerText = "Error: Check the console for details.";
+        console.error(error);
+      }
+    });
+
+    // --- Filler Word & Stutter Clean Up Logic ---
+    document.getElementById('cleanUpBtn').addEventListener('click', (e) => {
+      const fillerWords = ['um', 'uh', 'er', 'ah', 'mm', 'mhmm', 'mm-hmm'];
+      const cleanedArray = [];
+      
+      for (let i = 0; i < globalWordsArray.length; i++) {
+        const currentObj = globalWordsArray[i];
+        const currentCleanWord = currentObj.word.toLowerCase().trim();
+        
+        if (fillerWords.includes(currentCleanWord)) continue;
+        
+        const lastKept = cleanedArray.length > 0 ? cleanedArray[cleanedArray.length - 1].word.toLowerCase().trim() : "";
+        if (currentCleanWord === lastKept) continue;
+        
+        if (cleanedArray.length >= 2 && i + 1 < globalWordsArray.length) {
+            const nextWord = globalWordsArray[i+1].word.toLowerCase().trim();
+            const prev1 = cleanedArray[cleanedArray.length - 2].word.toLowerCase().trim();
+            const prev2 = cleanedArray[cleanedArray.length - 1].word.toLowerCase().trim();
+            
+            if (currentCleanWord === prev1 && nextWord === prev2) {
+                i++; 
+                continue;
+            }
+        }
+        
+        cleanedArray.push(currentObj);
+      }
+      
+      globalWordsArray = cleanedArray;
+      e.target.innerText = "✨ Cleaned!";
+      e.target.disabled = true;
+      renderTranscript();
+    });
+
+    // --- "You Know" Clean Up Logic ---
+    document.getElementById('cleanYouKnowBtn').addEventListener('click', (e) => {
+      const cleanedArray = [];
+      for (let i = 0; i < globalWordsArray.length; i++) {
+        const currentWord = globalWordsArray[i].word.toLowerCase().trim();
+        const nextWord = (i + 1 < globalWordsArray.length) ? globalWordsArray[i+1].word.toLowerCase().trim() : "";
+        if (currentWord === 'you' && nextWord === 'know') {
+          i++; 
+          continue;
+        }
+        cleanedArray.push(globalWordsArray[i]);
+      }
+      globalWordsArray = cleanedArray;
+      e.target.innerText = "✨ Removed!";
+      e.target.disabled = true;
+      renderTranscript();
+    });
+
+    // --- Speaker Management Logic ---
+    function initializeSpeakers() {
+      speakerConfig = {};
+      globalWordsArray.forEach(w => {
+        if (!speakerConfig[w.speaker]) {
+          const isUnknown = w.speaker === 0;
+          speakerConfig[w.speaker] = {
+            id: w.speaker,
+            name: isUnknown ? "⚠️ Unknown Speaker" : `Speaker ${w.speaker}`,
+            showName: true,
+            bold: w.speaker === 1, 
+            italic: false,
+            hidden: false,
+            isUnknown: isUnknown
+          };
+        }
+      });
+      renderSpeakerControls();
+    }
+
+    function renderSpeakerControls() {
+      const container = document.getElementById('speakerList');
+      container.innerHTML = ''; 
+      Object.values(speakerConfig).forEach(spk => {
+        const row = document.createElement('div');
+        row.className = 'speaker-row';
+        if (spk.isUnknown) row.classList.add('unknown-speaker-row');
+        
+        row.innerHTML = `
+          <strong>Spk ${spk.id}:</strong>
+          <input type="text" value="${spk.name}" id="name-${spk.id}" placeholder="Name">
+          <label><input type="checkbox" id="show-${spk.id}" ${spk.showName ? 'checked' : ''}> Show Name</label>
+          <label><input type="checkbox" id="bold-${spk.id}" ${spk.bold ? 'checked' : ''}> <b>Bold</b></label>
+          <label><input type="checkbox" id="italic-${spk.id}" ${spk.italic ? 'checked' : ''}> <i>Italic</i></label>
+          <label style="color: red;"><input type="checkbox" id="hide-${spk.id}" ${spk.hidden ? 'checked' : ''}> Hide Output</label>
+        `;
+        
+        row.querySelectorAll('input').forEach(input => {
+          input.addEventListener('change', () => {
+            speakerConfig[spk.id].name = document.getElementById(`name-${spk.id}`).value;
+            speakerConfig[spk.id].showName = document.getElementById(`show-${spk.id}`).checked;
+            speakerConfig[spk.id].bold = document.getElementById(`bold-${spk.id}`).checked;
+            speakerConfig[spk.id].italic = document.getElementById(`italic-${spk.id}`).checked;
+            speakerConfig[spk.id].hidden = document.getElementById(`hide-${spk.id}`).checked;
+            renderTranscript();
+          });
+        });
+        container.appendChild(row);
+      });
+    }
+
+    // --- Rendering Transcript ---
+    function renderTranscript(isExport = false) {
+      const container = document.getElementById('transcriptOutput');
+      if (!isExport) container.innerHTML = ''; 
+      
+      const exportContainer = document.createElement('div'); 
+      let currentSpeaker = null;
+      let currentParagraph = null;
+
+      globalWordsArray.forEach(wordObj => {
+        const conf = speakerConfig[wordObj.speaker];
+        if (!conf || conf.hidden) return; 
+
+        if (wordObj.speaker !== currentSpeaker) {
+          currentSpeaker = wordObj.speaker;
+          currentParagraph = document.createElement('p');
+          currentParagraph.style.marginBottom = "15px";
+          
+          if (!isExport) {
+              currentParagraph.setAttribute('contenteditable', 'true');
+              currentParagraph.style.outline = 'none';
+          }
+          
+          if (conf.bold) currentParagraph.style.fontWeight = "bold";
+          if (conf.italic) currentParagraph.style.fontStyle = "italic";
+          
+          if (conf.showName) {
+            const speakerLabel = document.createElement('span');
+            speakerLabel.className = 'speaker-label';
+            speakerLabel.setAttribute('contenteditable', 'false');
+            speakerLabel.innerText = `${conf.name}: `;
+            if (!isExport && conf.bold) speakerLabel.style.color = "#1976d2";
+            currentParagraph.appendChild(speakerLabel);
+          }
+          
+          if (isExport) {
+            exportContainer.appendChild(currentParagraph);
+          } else {
+            container.appendChild(currentParagraph);
+          }
+        }
+        
+        const text = (wordObj.punctuated_word || wordObj.word) + ' ';
+        
+        if (isExport) {
+          currentParagraph.appendChild(document.createTextNode(text));
+        } else {
+          const wordSpan = document.createElement('span');
+          wordSpan.className = 'word';
+          wordSpan.innerText = text;
+          wordSpan.setAttribute('data-start', wordObj.start);
+          
+          // Confidence threshold set to 65% (0.65)
+          if (wordObj.confidence < 0.65) {
+            wordSpan.classList.add('low-confidence');
+            wordSpan.title = `Confidence: ${Math.round(wordObj.confidence * 100)}%`; 
+          }
+          currentParagraph.appendChild(wordSpan);
+        }
+      });
+
+      return isExport ? exportContainer.innerHTML : ""; 
+    }
+
+    // --- Rich Text Copy functionality ---
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      const containerToCopy = document.getElementById('transcriptOutput');
+      const cleanHtml = containerToCopy.innerHTML; 
+      
+      try {
+        const blobHtml = new Blob([cleanHtml], { type: "text/html" });
+        const blobText = new Blob([containerToCopy.innerText], { type: "text/plain" });
+        
+        const data = [new ClipboardItem({
+          "text/html": blobHtml,
+          "text/plain": blobText,
+        })];
+        
+        await navigator.clipboard.write(data);
+        alert("Clean transcript copied to clipboard!");
+      } catch (err) {
+        console.error('Failed to copy: ', err);
+        alert("Error copying to clipboard. Check console.");
+      }
+    });
+
+    // --- Click-to-Jump Logic ---
+    document.getElementById('transcriptOutput').addEventListener('click', (e) => {
+      if (e.target.classList.contains('word') && e.target.hasAttribute('data-start')) {
+        const startTime = parseFloat(e.target.getAttribute('data-start'));
+        cancelLoop(); 
+        audioPlayer.currentTime = startTime;
+        audioPlayer.play();
+      }
+    });
+
+  </script>
+</body>
+</html>
